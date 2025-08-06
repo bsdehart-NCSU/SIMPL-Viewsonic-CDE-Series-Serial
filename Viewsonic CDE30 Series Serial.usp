@@ -1,0 +1,1308 @@
+/*******************************************************************************************
+  SIMPL+ Module Information
+*******************************************************************************************/
+/*
+Dealer Name: NC State DELTA
+System Name: ViewSonic CDE30 Series RS-232 v1.0
+Programmer: Brandon DeHart / Gemini 2.5 Pro
+Comments: This module provides comprehensive RS-232 control for ViewSonic CDE30
+          series commercial displays. It handles power, input selection, audio,
+          picture adjustments, and status polling.
+v1.0: Initial release based on the CDE30 User Guide RS-232 Protocol.
+*/
+
+//================================================================================
+// COMPILER DIRECTIVES
+//================================================================================
+#SYMBOL_NAME "ViewSonic CDE30 Series RS-232 Control v1.0"
+#HINT "Provides full RS-232 control for ViewSonic CDE30 series displays with status polling."
+#PRINT_TO_TRACE
+#ENABLE_STACK_CHECKING
+#CATEGORY "24" // TV/Video Projector
+#HELP_PDF_FILE "ViewSonic CDE30 Series RS-232 Help File.pdf"
+
+//================================================================================
+// CONSTANTS
+//================================================================================
+#DEFINE_CONSTANT MAX_SERIAL_BUFFER_SIZE 255
+#DEFINE_CONSTANT MAX_COMMAND_SIZE       50
+#DEFINE_CONSTANT RESPONSE_TIMEOUT_HS    300     // 3 seconds response timeout
+#DEFINE_CONSTANT COMMAND_DELAY_MS       50      // 50ms delay between commands
+#DEFINE_CONSTANT DEFAULT_POLL_RATE_S    30      // Default poll rate: 30 seconds
+#DEFINE_CONSTANT MIN_POLL_RATE_S        5       // Minimum allowed poll rate
+#DEFINE_CONSTANT MAX_POLL_RATE_S        300     // Maximum allowed poll rate
+
+// RS-232 Protocol Constants
+#DEFINE_CONSTANT CMD_TERMINATOR         "\x0D"
+#DEFINE_CONSTANT CMD_TYPE_SET           "s"
+#DEFINE_CONSTANT CMD_TYPE_GET           "g"
+#DEFINE_CONSTANT REPLY_ACK              "+"
+#DEFINE_CONSTANT REPLY_NACK             "-"
+
+//================================================================================
+// INPUTS AND OUTPUTS
+//================================================================================
+
+//-------------------- DIGITAL INPUTS / OUTPUTS --------------------
+//---- Power Control & Feedback ----
+DIGITAL_INPUT  Power_On_trig;                 DIGITAL_OUTPUT Power_Is_On_fb;
+DIGITAL_INPUT  Power_Off_trig;                DIGITAL_OUTPUT Power_Is_Off_fb;
+DIGITAL_INPUT  _SKIP_;                        DIGITAL_OUTPUT _SKIP_;
+
+//---- Input Selection & Feedback ----
+DIGITAL_INPUT  Input_Select_HDMI1_trig;       DIGITAL_OUTPUT Is_HDMI1_fb;
+DIGITAL_INPUT  Input_Select_HDMI2_trig;       DIGITAL_OUTPUT Is_HDMI2_fb;
+DIGITAL_INPUT  Input_Select_HDMI3_trig;       DIGITAL_OUTPUT Is_HDMI3_fb;
+DIGITAL_INPUT  Input_Select_Android_trig;     DIGITAL_OUTPUT Is_Android_fb;
+DIGITAL_INPUT  Input_Select_TypeC_trig;       DIGITAL_OUTPUT Is_TypeC_fb;
+DIGITAL_INPUT  _SKIP_;                        DIGITAL_OUTPUT _SKIP_;
+
+//---- Audio Control & Feedback ----
+DIGITAL_INPUT  Volume_Up_trig;                DIGITAL_OUTPUT Is_Muted_fb;
+DIGITAL_INPUT  Volume_Down_trig;              DIGITAL_OUTPUT _SKIP_;
+DIGITAL_INPUT  Mute_On_trig;                  DIGITAL_OUTPUT _SKIP_;
+DIGITAL_INPUT  Mute_Off_trig;                 DIGITAL_OUTPUT _SKIP_;
+DIGITAL_INPUT  Bass_Up_trig;                  DIGITAL_OUTPUT _SKIP_;
+DIGITAL_INPUT  Bass_Down_trig;                DIGITAL_OUTPUT _SKIP_;
+DIGITAL_INPUT  Treble_Up_trig;                DIGITAL_OUTPUT _SKIP_;
+DIGITAL_INPUT  Treble_Down_trig;              DIGITAL_OUTPUT _SKIP_;
+DIGITAL_INPUT  _SKIP_;                        DIGITAL_OUTPUT _SKIP_;
+
+//---- Picture & Display Control & Feedback ----
+DIGITAL_INPUT  Brightness_Up_trig;            DIGITAL_OUTPUT Is_Frozen_fb;
+DIGITAL_INPUT  Brightness_Down_trig;          DIGITAL_OUTPUT _SKIP_;
+DIGITAL_INPUT  Contrast_Up_trig;              DIGITAL_OUTPUT _SKIP_;
+DIGITAL_INPUT  Contrast_Down_trig;            DIGITAL_OUTPUT _SKIP_;
+DIGITAL_INPUT  Sharpness_Up_trig;             DIGITAL_OUTPUT _SKIP_;
+DIGITAL_INPUT  Sharpness_Down_trig;           DIGITAL_OUTPUT _SKIP_;
+DIGITAL_INPUT  Color_Up_trig;                 DIGITAL_OUTPUT _SKIP_;
+DIGITAL_INPUT  Color_Down_trig;               DIGITAL_OUTPUT _SKIP_;
+DIGITAL_INPUT  Tint_Up_trig;                  DIGITAL_OUTPUT _SKIP_;
+DIGITAL_INPUT  Tint_Down_trig;                DIGITAL_OUTPUT _SKIP_;
+DIGITAL_INPUT  Freeze_On_trig;                DIGITAL_OUTPUT Is_Zoom_Mode_Full_fb;
+DIGITAL_INPUT  Freeze_Off_trig;               DIGITAL_OUTPUT Is_Zoom_Mode_Normal_fb;
+DIGITAL_INPUT  Zoom_Mode_Full_trig;           DIGITAL_OUTPUT Is_Zoom_Mode_Real_fb;
+DIGITAL_INPUT  Zoom_Mode_Normal_trig;         DIGITAL_OUTPUT Is_Color_Mode_Normal_fb;
+DIGITAL_INPUT  Zoom_Mode_Real_trig;           DIGITAL_OUTPUT Is_Color_Mode_Warm_fb;
+DIGITAL_INPUT  Color_Mode_Normal_trig;        DIGITAL_OUTPUT Is_Color_Mode_Cold_fb;
+DIGITAL_INPUT  Color_Mode_Warm_trig;          DIGITAL_OUTPUT _SKIP_;
+DIGITAL_INPUT  Color_Mode_Cold_trig;          DIGITAL_OUTPUT _SKIP_;
+
+//---- System & OSD Control ----
+DIGITAL_INPUT  Power_Lock_On_trig;            DIGITAL_OUTPUT Is_Power_Locked_fb;
+DIGITAL_INPUT  Power_Lock_Off_trig;           DIGITAL_OUTPUT _SKIP_;
+DIGITAL_INPUT  Button_Lock_On_trig;           DIGITAL_OUTPUT Is_Button_Locked_fb;
+DIGITAL_INPUT  Button_Lock_Off_trig;          DIGITAL_OUTPUT _SKIP_;
+DIGITAL_INPUT  Menu_Lock_On_trig;             DIGITAL_OUTPUT Is_Menu_Locked_fb;
+DIGITAL_INPUT  Menu_Lock_Off_trig;            DIGITAL_OUTPUT _SKIP_;
+DIGITAL_INPUT  Keypad_Up_trig;                DIGITAL_OUTPUT _SKIP_;
+DIGITAL_INPUT  Keypad_Down_trig;              DIGITAL_OUTPUT _SKIP_;
+DIGITAL_INPUT  Keypad_Left_trig;              DIGITAL_OUTPUT _SKIP_;
+DIGITAL_INPUT  Keypad_Right_trig;             DIGITAL_OUTPUT _SKIP_;
+DIGITAL_INPUT  Keypad_Enter_trig;             DIGITAL_OUTPUT _SKIP_;
+DIGITAL_INPUT  Keypad_Menu_trig;              DIGITAL_OUTPUT _SKIP_;
+DIGITAL_INPUT  Keypad_Exit_trig;              DIGITAL_OUTPUT _SKIP_;
+DIGITAL_INPUT  Restore_Defaults_trig;         DIGITAL_OUTPUT _SKIP_;
+DIGITAL_INPUT  _SKIP_;                        DIGITAL_OUTPUT _SKIP_;
+
+//---- Polling and Communication ----
+DIGITAL_INPUT  Enable_Polling_trig;           DIGITAL_OUTPUT Polling_Is_Active_fb;
+DIGITAL_INPUT  _SKIP_;                        DIGITAL_OUTPUT Is_Communicating_fb;
+DIGITAL_INPUT  _SKIP_;                        DIGITAL_OUTPUT _SKIP_;
+
+//---- Information Queries ----
+DIGITAL_INPUT  Query_All_Status_trig;         DIGITAL_OUTPUT _SKIP_;
+DIGITAL_INPUT  _SKIP_;                        DIGITAL_OUTPUT _SKIP_;
+
+
+//-------------------- ANALOG INPUTS / OUTPUTS --------------------
+//---- Audio Feedback ----
+ANALOG_INPUT   Volume_Level_ain;              ANALOG_OUTPUT  Volume_Level_fb;
+ANALOG_INPUT   Bass_Level_ain;            ANALOG_OUTPUT  Bass_Level_fb;
+ANALOG_INPUT   Treble_Level_ain;          ANALOG_OUTPUT  Treble_Level_fb;
+ANALOG_INPUT   _SKIP_;			              ANALOG_OUTPUT  _SKIP_;
+
+//---- Picture Feedback ----
+ANALOG_INPUT   Brightness_Level_ain;          ANALOG_OUTPUT  Brightness_Level_fb;
+ANALOG_INPUT   Contrast_Level_ain;            ANALOG_OUTPUT  Contrast_Level_fb;
+ANALOG_INPUT   Sharpness_Level_ain;           ANALOG_OUTPUT  Sharpness_Level_fb;
+ANALOG_INPUT   Color_Level_ain;               ANALOG_OUTPUT  Color_Level_fb;
+ANALOG_INPUT   Tint_Level_ain;                ANALOG_OUTPUT  Tint_Level_fb;
+ANALOG_INPUT   _SKIP_;			              ANALOG_OUTPUT  _SKIP_;
+
+//---- System ID & Polling Rate ----
+ANALOG_INPUT   Poll_Rate_seconds_ain;         ANALOG_OUTPUT  _SKIP_;
+ANALOG_INPUT   Display_ID_ain;                ANALOG_OUTPUT  _SKIP_;
+ANALOG_INPUT   _SKIP_;			              ANALOG_OUTPUT  _SKIP_;
+
+//-------------------- SERIAL INPUTS / OUTPUTS --------------------
+//---- Communication and Debug ----
+
+STRING_INPUT _SKIP_;						  STRING_OUTPUT  FW_Version_fb$;
+STRING_INPUT _SKIP_;						  STRING_OUTPUT  Serial_Number_fb$;
+STRING_INPUT _SKIP_;						  STRING_OUTPUT  Device_Name_fb$;
+STRING_INPUT _SKIP_;						  STRING_OUTPUT  IP_Address_fb$;
+STRING_INPUT _SKIP_;						  STRING_OUTPUT  MAC_Address_fb$;
+STRING_INPUT _SKIP_;						  STRING_OUTPUT  _SKIP_;
+STRING_INPUT _SKIP_;						  STRING_OUTPUT  Debug_fb$;
+BUFFER_INPUT   From_Display_rx$[MAX_SERIAL_BUFFER_SIZE];  STRING_OUTPUT  To_Display_tx$;
+
+
+//================================================================================
+// PARAMETERS
+//================================================================================
+
+//================================================================================
+// GLOBAL VARIABLES
+//================================================================================
+INTEGER g_bInitialized, g_nDisplayID, g_bPollingEnabled, g_bInPowerTransition;
+INTEGER g_nPollInterval_hs, g_bQueryAllInProgress;
+STRING g_sRxBuffer[1024];
+
+// State Tracking Variables
+STRING g_sCurrentPower[10];
+STRING g_sCurrentInput[10];
+INTEGER g_nCurrentVolume;
+INTEGER g_bIsMuted;
+INTEGER g_bIsFrozen;
+INTEGER g_bIsPowerLocked, g_bIsButtonLocked, g_bIsMenuLocked;
+INTEGER g_nCurrentBrightness, g_nCurrentContrast, g_nCurrentSharpness;
+INTEGER g_nCurrentColor, g_nCurrentTint, g_nCurrentBass, g_nCurrentTreble;
+STRING g_sCurrentZoomMode[10];
+STRING g_sCurrentColorMode[10];
+
+// Query Management
+STRING g_sLastSetCommand[10];
+INTEGER g_bWaitingForResponse;
+STRING g_sLastQueryCmd[5];
+INTEGER g_bQueryAllQueued;
+
+//================================================================================
+// HELPER FUNCTIONS
+//================================================================================
+
+// Removes non-printable characters from a response string
+STRING_FUNCTION TRIM_RESPONSE(STRING sInput)
+{
+    STRING sTemp[MAX_SERIAL_BUFFER_SIZE];
+    STRING sEmpty[1];
+    INTEGER i, nLen, nByte;
+
+    sEmpty = "";
+    nLen = LEN(sInput);
+    IF (nLen = 0) { RETURN(sEmpty); }
+
+    sTemp = "";
+    FOR (i = 1 TO nLen)
+    {
+        nByte = BYTE(sInput, i);
+        IF (nByte > 32 && nByte < 127)
+        {
+            sTemp = sTemp + CHR(nByte);
+        }
+    }
+    RETURN(sTemp);
+}
+
+STRING_FUNCTION GetCommandDescription(STRING sCmdType, STRING sCmdCode, STRING sValue)
+{
+    STRING sDesc[MAX_COMMAND_SIZE];
+    sDesc = "Unknown Command"; 
+
+    IF (sCmdType = "s") // Set Commands
+    {
+        sDesc = "Set " + sCmdCode + " to " + sValue;
+        // Fallback
+        IF (sCmdCode = "!")
+        {
+            IF (sValue = "001") { sDesc = "Set Power: On"; } ELSE { sDesc = "Set Power: Off"; }
+        }
+        ELSE IF (sCmdCode = "\x22")
+        {
+            IF (sValue = "004") { sDesc = "Set Input: HDMI 1"; } ELSE IF (sValue = "014") { sDesc = "Set Input: HDMI 2"; } ELSE IF (sValue = "024") { sDesc = "Set Input: HDMI 3"; } ELSE IF (sValue = "00A") { sDesc = "Set Input: Android"; } ELSE IF (sValue = "019") { sDesc = "Set Input: Type-C"; }
+        }
+        ELSE IF (sCmdCode = "5")
+        {
+            IF (sValue = "901") { sDesc = "Set Volume: Up"; } ELSE IF (sValue = "900") { sDesc = "Set Volume: Down"; } ELSE { sDesc = "Set Volume to: " + ITOA(ATOI(sValue)); }
+        }
+        ELSE IF (sCmdCode = "6")
+        {
+            IF (sValue = "001") { sDesc = "Set Mute: On"; } ELSE { sDesc = "Set Mute: Off"; }
+        }
+        ELSE IF (sCmdCode = "$")
+        {
+            sDesc = "Set Brightness: " + ITOA(ATOI(sValue));
+        }
+        ELSE IF (sCmdCode = "*")
+        {
+            IF (sValue = "001") { sDesc = "Set Freeze: On"; } ELSE { sDesc = "Set Freeze: Off"; }
+        }
+        ELSE IF (sCmdCode = "#") { sDesc = "Set Contrast: " + ITOA(ATOI(sValue)); }
+        ELSE IF (sCmdCode = "%") { sDesc = "Set Sharpness: " + ITOA(ATOI(sValue)); }
+        ELSE IF (sCmdCode = "&") { sDesc = "Set Color: " + ITOA(ATOI(sValue)); }
+        ELSE IF (sCmdCode = "'") { sDesc = "Set Tint: " + ITOA(ATOI(sValue)); }
+        ELSE IF (sCmdCode = ".") { sDesc = "Set Bass: " + ITOA(ATOI(sValue)); }
+        ELSE IF (sCmdCode = "/") { sDesc = "Set Treble: " + ITOA(ATOI(sValue)); }
+        ELSE IF (sCmdCode = "4")
+        {
+            IF (sValue = "001") { sDesc = "Set Power Lock: On"; } ELSE { sDesc = "Set Power Lock: Off"; }
+        }
+        ELSE IF (sCmdCode = "8")
+        {
+            IF (sValue = "001") { sDesc = "Set Button Lock: On"; } ELSE { sDesc = "Set Button Lock: Off"; }
+        }
+        ELSE IF (sCmdCode = ">")
+        {
+            IF (sValue = "001") { sDesc = "Set Menu Lock: On"; } ELSE { sDesc = "Set Menu Lock: Off"; }
+        }
+        ELSE IF (sCmdCode = "1")
+        {
+            IF (sValue = "000") { sDesc = "Set Zoom Mode: Full"; } ELSE IF (sValue = "001") { sDesc = "Set Zoom Mode: Normal"; } ELSE IF (sValue = "002") { sDesc = "Set Zoom Mode: Real"; }
+        }
+        ELSE IF (sCmdCode = ")")
+        {
+            IF (sValue = "000") { sDesc = "Set Color Mode: Normal"; } ELSE IF (sValue = "001") { sDesc = "Set Color Mode: Warm"; } ELSE IF (sValue = "002") { sDesc = "Set Color Mode: Cold"; }
+        }
+        ELSE IF (sCmdCode = "A") { sDesc = "Send Keypad Command"; }
+        ELSE IF (sCmdCode = "~") { sDesc = "Restore Factory Defaults"; }
+    }
+    ELSE IF (sCmdType = "g") // Get Commands
+    {
+        sDesc = "Get " + sCmdCode;
+        // Fallback
+        IF (sCmdCode = "l") { sDesc = "Get Power State"; }
+        ELSE IF (sCmdCode = "j") { sDesc = "Get Input Source"; }
+        ELSE IF (sCmdCode = "f") { sDesc = "Get Volume"; }
+        ELSE IF (sCmdCode = "g") { sDesc = "Get Mute Status"; }
+        ELSE IF (sCmdCode = "b") { sDesc = "Get Brightness"; }
+        ELSE IF (sCmdCode = "a") { sDesc = "Get Contrast"; }
+        ELSE IF (sCmdCode = "c") { sDesc = "Get Sharpness"; }
+        ELSE IF (sCmdCode = "d") { sDesc = "Get Color"; }
+        //ELSE IF (sCmdCode = "e") { sDesc = "Get Tint"; }
+        ELSE IF (sCmdCode = "i") { sDesc = "Get Freeze Status"; }
+        ELSE IF (sCmdCode = "o") { sDesc = "Get Power Lock"; }
+        ELSE IF (sCmdCode = "p") { sDesc = "Get Button Lock"; }
+        ELSE IF (sCmdCode = "q") { sDesc = "Get Menu Lock"; }
+        ELSE IF (sCmdCode = "8") { sDesc = "Get FW Version"; }
+        ELSE IF (sCmdCode = "7") { sDesc = "Get Serial Number"; }
+        ELSE IF (sCmdCode = "4") { sDesc = "Get Device Name"; }
+        ELSE IF (sCmdCode = "6") { sDesc = "Get IP Address"; }
+        ELSE IF (sCmdCode = "5") { sDesc = "Get MAC Address"; }
+    }
+    ELSE IF (sCmdType = "r") // Reply Messages
+    {
+        sDesc = "Reply " + sCmdCode + "=" + sValue;
+        // Fallback
+        IF (sCmdCode = "l")
+        {
+            IF (sValue = "001") { sDesc = "Power State is On"; } ELSE { sDesc = "Power State is Off"; }
+        }
+        ELSE IF (sCmdCode = "j")
+        {
+            IF (sValue = "104") { sDesc = "Input is HDMI 1"; } ELSE IF (sValue = "114") { sDesc = "Input is HDMI 2"; } ELSE IF (sValue = "124") { sDesc = "Input is HDMI 3"; } ELSE { sDesc = "Input is " + sValue; }
+        }
+        ELSE IF (sCmdCode = "f") { sDesc = "Volume is " + ITOA(ATOI(sValue)); }
+        ELSE IF (sCmdCode = "g")
+        {
+            IF (sValue = "001") { sDesc = "Mute Status: On"; } ELSE { sDesc = "Mute Status: Off"; }
+        }
+        ELSE IF (sCmdCode = "b") { sDesc = "Brightness Level: " + ITOA(ATOI(sValue)); }
+        ELSE IF (sCmdCode = "a") { sDesc = "Contrast Level: " + ITOA(ATOI(sValue)); }
+        ELSE IF (sCmdCode = "c") { sDesc = "Sharpness Level: " + ITOA(ATOI(sValue)); }
+        ELSE IF (sCmdCode = "d") { sDesc = "Color Level: " + ITOA(ATOI(sValue)); }
+        ELSE IF (sCmdCode = "e") { sDesc = "Tint Level: " + ITOA(ATOI(sValue)); }
+        ELSE IF (sCmdCode = "i")
+        {
+            IF (sValue = "001") { sDesc = "Freeze Status: On"; } ELSE { sDesc = "Freeze Status: Off"; }
+        }
+        ELSE IF (sCmdCode = "7") { sDesc = "Serial Number: " + sValue; }
+        ELSE IF (sCmdCode = "5") { sDesc = "MAC Address: " + sValue; }
+    }
+    RETURN(sDesc);
+}
+
+// Formats and sends a command to the display, now tracks the last command sent
+FUNCTION SendCommand(STRING sCmdType, STRING sCmdCode, STRING sValue)
+{
+    STRING sFullCommand[MAX_COMMAND_SIZE];
+    STRING sFinalTxString[MAX_COMMAND_SIZE];
+    INTEGER nCmdLength;
+
+    MAKESTRING(sFullCommand, "%02d%s%s%s", g_nDisplayID, sCmdType, sCmdCode, sValue);
+    nCmdLength = LEN(sFullCommand) + 1;
+    sFinalTxString = ITOA(nCmdLength) + sFullCommand + CMD_TERMINATOR;
+    
+    To_Display_tx$ = sFinalTxString;
+    // CORRECTED: Passes the correct command type for an accurate debug message
+    Debug_fb$ = "TX> " + GetCommandDescription(sCmdType, sCmdCode, sValue);
+
+    IF (sCmdType = CMD_TYPE_SET)
+    {
+        g_sLastSetCommand = sCmdCode + sValue;
+    }
+}
+
+// Sets and validates the Display ID from the analog input
+FUNCTION SetDisplayID()
+{
+    IF (Display_ID_ain >= 1 && Display_ID_ain <= 98)
+    {
+        g_nDisplayID = Display_ID_ain;
+    }
+    ELSE
+    {
+        g_nDisplayID = 1; // Default to 1 if input is 0 or out of bounds
+    }
+    Debug_fb$ = "Display ID Set: " + ITOA(g_nDisplayID);
+}
+
+FUNCTION VerifyPowerState()
+{
+	// This function checks if the actual power state matches the desired state
+	// indicated by a latched trigger input. If not, it resends the command.
+
+	// Check for Power On mismatch
+	IF (Power_On_trig = 1)
+	{
+		IF (Power_Is_On_fb = 0)
+		{
+			// The system desires 'On', but the display is 'Off'.
+			// Resend the Power On command.
+			Debug_fb$ = "Pwr Mismatch: Resending ON";
+			Print("VerifyPowerState: Mismatch detected. Desired: ON, Actual: OFF. Resending command.\n");
+			SendCommand(CMD_TYPE_SET, "!", "001");
+		}
+	}
+	// Use ELSE IF to prevent sending conflicting commands if both triggers are somehow high
+	ELSE IF (Power_Off_trig = 1)
+	{
+		IF (Power_Is_Off_fb = 0)
+		{
+			// The system desires 'Off', but the display is 'On'.
+			// Resend the Power Off command.
+			Debug_fb$ = "Pwr Mismatch: Resending OFF";
+			Print("VerifyPowerState: Mismatch detected. Desired: OFF, Actual: ON. Resending command.\n");
+			SendCommand(CMD_TYPE_SET, "!", "000");
+		}
+	}
+}
+
+// Updates all feedback outputs based on global state variables
+FUNCTION UpdatePowerFeedback()
+{
+	Power_Is_On_fb = (g_sCurrentPower = "001");
+	Power_Is_Off_fb = (g_sCurrentPower = "000");
+}
+
+FUNCTION UpdateInputFeedback()
+{
+	Is_HDMI1_fb = (g_sCurrentInput = "104");
+	Is_HDMI2_fb = (g_sCurrentInput = "114");
+	Is_HDMI3_fb = (g_sCurrentInput = "124");
+	Is_Android_fb = (g_sCurrentInput = "00A");
+	Is_TypeC_fb = (g_sCurrentInput = "019");
+}
+
+FUNCTION UpdateAudioFeedback()
+{
+	Volume_Level_fb = g_nCurrentVolume;
+	Bass_Level_fb = g_nCurrentBass;
+	Treble_Level_fb = g_nCurrentTreble;
+	Is_Muted_fb = g_bIsMuted;
+}
+
+FUNCTION UpdateBrightnessFeedback()
+{
+	Brightness_Level_fb = g_nCurrentBrightness;
+}
+
+FUNCTION UpdateContrastFeedback()
+{
+	Contrast_Level_fb = g_nCurrentContrast;
+}
+
+FUNCTION UpdateSharpnessFeedback()
+{
+	Sharpness_Level_fb = g_nCurrentSharpness;
+}
+
+FUNCTION UpdateColorFeedback()
+{
+	Color_Level_fb = g_nCurrentColor;
+}
+
+FUNCTION UpdateTintFeedback()
+{
+	Tint_Level_fb = g_nCurrentTint;
+}
+
+FUNCTION UpdateFreezeFeedback()
+{
+	Is_Frozen_fb = g_bIsFrozen;
+}
+
+FUNCTION UpdateLockFeedback()
+{
+	Is_Power_Locked_fb = g_bIsPowerLocked;
+	Is_Button_Locked_fb = g_bIsButtonLocked;
+	Is_Menu_Locked_fb = g_bIsMenuLocked;
+}
+
+
+// This function calls all the smaller ones. It is now only used for a full refresh.
+FUNCTION UpdateAllFeedback()
+{
+	CALL UpdatePowerFeedback();
+	CALL UpdateInputFeedback();
+	CALL UpdateAudioFeedback();
+	CALL UpdateBrightnessFeedback();
+	CALL UpdateContrastFeedback();
+	CALL UpdateSharpnessFeedback();
+	CALL UpdateColorFeedback();
+	CALL UpdateTintFeedback();
+	CALL UpdateFreezeFeedback();
+	CALL UpdateLockFeedback();
+	Debug_fb$ = "All Feedback Updated";
+}
+
+// Provides immediate "emulated" feedback for all set commands on ACK
+FUNCTION ProcessAck()
+{
+    STRING sCmd[2], sValue[MAX_COMMAND_SIZE];
+    Is_Communicating_fb = 1;
+    sCmd = LEFT(g_sLastSetCommand, 1);
+    sValue = RIGHT(g_sLastSetCommand, LEN(g_sLastSetCommand) - 1);
+    Debug_fb$ = "ACK> " + GetCommandDescription("s", sCmd, sValue);
+
+    IF (sCmd = "!") 
+    { 
+        g_sCurrentPower = sValue; 
+        CALL UpdatePowerFeedback();
+    }
+    ELSE IF (sCmd = "\x22") 
+    { 
+        g_sCurrentInput = sValue;
+        CALL UpdateInputFeedback();
+    }
+    ELSE IF (sCmd = "5" || sCmd = "6" || sCmd = "." || sCmd = "/") // Audio Commands
+    { 
+        IF (sCmd = "5") // Volume
+        {
+            IF (sValue = "901") 
+            { 
+                IF (g_nCurrentVolume < 100) { g_nCurrentVolume = g_nCurrentVolume + 1; } 
+            }
+            ELSE IF (sValue = "900") 
+            { 
+                IF (g_nCurrentVolume > 0) { g_nCurrentVolume = g_nCurrentVolume - 1; } 
+            }
+            ELSE 
+            { 
+                g_nCurrentVolume = ATOI(sValue); 
+            }
+        }
+        ELSE IF (sCmd = "6") { g_bIsMuted = (sValue = "001"); }
+        ELSE IF (sCmd = ".") { g_nCurrentBass = ATOI(sValue); }
+        ELSE IF (sCmd = "/") { g_nCurrentTreble = ATOI(sValue); }
+        CALL UpdateAudioFeedback();
+    }
+    ELSE IF (sCmd = "$") // Brightness
+    {
+        IF (sValue = "901")
+        {
+            IF (g_nCurrentBrightness < 100) { g_nCurrentBrightness = g_nCurrentBrightness + 1; }
+        }
+        ELSE IF (sValue = "900")
+        {
+            IF (g_nCurrentBrightness > 0) { g_nCurrentBrightness = g_nCurrentBrightness - 1; }
+        }
+        ELSE
+        {
+            g_nCurrentBrightness = ATOI(sValue);
+        }
+        CALL UpdateBrightnessFeedback();
+    }
+    ELSE IF (sCmd = "#") // Contrast
+    { 
+        g_nCurrentContrast = ATOI(sValue); 
+        CALL UpdateContrastFeedback();
+    }
+    ELSE IF (sCmd = "%") // Sharpness
+    { 
+        g_nCurrentSharpness = ATOI(sValue); 
+        CALL UpdateSharpnessFeedback();
+    }
+    ELSE IF (sCmd = "&") // Color
+    { 
+        g_nCurrentColor = ATOI(sValue); 
+        CALL UpdateColorFeedback();
+    }
+    ELSE IF (sCmd = "'") // Tint
+    { 
+        g_nCurrentTint = ATOI(sValue); 
+        CALL UpdateTintFeedback();
+    }
+    ELSE IF (sCmd = "*") // Freeze
+    { 
+        g_bIsFrozen = (sValue = "001"); 
+        CALL UpdateFreezeFeedback();
+    }
+    ELSE IF (sCmd = "1") { g_sCurrentZoomMode = sValue; }
+    ELSE IF (sCmd = ")") { g_sCurrentColorMode = sValue; }
+    ELSE IF (sCmd = "4" || sCmd = "8" || sCmd = ">") // Locks
+    {
+        IF (sCmd = "4") { g_bIsPowerLocked = (sValue = "001"); }
+        ELSE IF (sCmd = "8") { g_bIsButtonLocked = (sValue = "001"); }
+        ELSE IF (sCmd = ">") { g_bIsMenuLocked = (sValue = "001"); }
+        CALL UpdateLockFeedback();
+    }
+    
+    // Cleanup
+    g_sLastSetCommand = "";
+}
+
+// NEW: Processes unsolicited asynchronous 'r' type responses from the display
+FUNCTION ProcessAsyncResponse(STRING sResponse)
+{
+    STRING sCmdCode[2], sValue[4];
+    
+    Is_Communicating_fb = 1;
+    sCmdCode = MID(sResponse, 5, 1);
+    sValue = MID(sResponse, 6, 3);
+
+    IF (sCmdCode = "l") // Power Status
+    {
+        g_sCurrentPower = sValue;
+        IF (g_bInPowerTransition = 1)
+        {
+            // Clear the lock on success. This stops the blinking and disarms the timeout.
+            g_bInPowerTransition = 0; 
+        }
+    }
+    ELSE IF (sCmdCode = "g") // Input Status
+    {
+        g_sCurrentInput = sValue;
+    }
+    
+    CALL UpdateAllFeedback(); // Set final solid feedback state
+    Debug_fb$ = "RX ASYNC: " + sCmdCode + "=" + sValue;
+}
+
+// Sets and validates the polling interval from the analog input
+FUNCTION SetPollInterval()
+{
+    IF (Poll_Rate_seconds_ain = 0)
+    {
+        g_nPollInterval_hs = DEFAULT_POLL_RATE_S * 100;
+    }
+    ELSE IF (Poll_Rate_seconds_ain < MIN_POLL_RATE_S)
+    {
+        g_nPollInterval_hs = MIN_POLL_RATE_S * 100;
+    }
+    ELSE IF (Poll_Rate_seconds_ain > MAX_POLL_RATE_S)
+    {
+        g_nPollInterval_hs = MAX_POLL_RATE_S * 100;
+    }
+    ELSE
+    {
+        g_nPollInterval_hs = Poll_Rate_seconds_ain * 100;
+    }
+    Debug_fb$ = "Poll Rate Set: " + ITOA(g_nPollInterval_hs / 100) + "s";
+}
+ 
+// Starts a query and a timeout for the response
+FUNCTION StartQuery(STRING sCmdCode)
+{
+    IF (g_bWaitingForResponse = 1)
+    {
+        Debug_fb$ = "StartQuery: Ignored request to query because another query is already pending";
+        RETURN;
+    }
+    
+    g_bWaitingForResponse = 1;
+    g_sLastQueryCmd = sCmdCode;
+    SendCommand(CMD_TYPE_GET, sCmdCode, "000");
+    
+    WAIT(RESPONSE_TIMEOUT_HS, QueryTimeout)
+    {
+        IF (g_bWaitingForResponse = 1)
+        {
+            g_bWaitingForResponse = 0;
+            Is_Communicating_fb = 0;
+            Debug_fb$ = "Timeout: " + GetCommandDescription("g", g_sLastQueryCmd, "");
+            
+            // If the timeout occurred during a full query, we must abort it.
+            IF (g_bQueryAllInProgress = 1)
+            {
+                g_bQueryAllInProgress = 0;
+                Debug_fb$ = "Full Query Aborted";
+
+                // After aborting, the main polling loop will recover on its next scheduled interval.
+                // The call to StartMasterPollingLoop() has been removed to fix the circular dependency.
+            }
+        }
+    }
+}
+
+// This function will be the main entry point for the polling cycle
+FUNCTION StartPollingCycle()
+{
+    // If polling has been disabled or a command is busy, do not start.
+    IF (g_bPollingEnabled = 0 || g_bWaitingForResponse = 1)
+    {
+        RETURN;
+    }
+    
+    // Check if a full query has been requested.
+    IF (g_bQueryAllQueued = 1)
+    {
+        g_bQueryAllQueued = 0; // Clear the flag
+        // A full query was requested, so we run that instead of a normal poll.
+        g_bQueryAllInProgress = 1;
+        Debug_fb$ = "Starting Queued Full Status Query...";
+        CALL StartQuery("l"); // Start the full query sequence
+    }
+    ELSE
+    {
+        // No full query requested, so run a normal, short poll.
+        Debug_fb$ = "Polling Cycle Start";
+        CALL StartQuery("l"); // Get-Power status
+    }
+}
+
+// This function contains the master timer for the recurring poll.
+FUNCTION StartMasterPollingLoop()
+{
+    // Schedules the next polling cycle to start after the defined interval.
+    WAIT(g_nPollInterval_hs, Poll_Loop)
+    {
+        IF (g_bPollingEnabled = 1)
+        {
+            CALL StartPollingCycle();
+        }
+    }
+}
+
+// Kicks off the full status query sequence, now with queuing logic
+FUNCTION QueryAllStatus()
+{
+	// This function no longer starts a query directly.
+	// It sets a flag that will be checked by the main polling loop.
+	IF (g_bQueryAllInProgress = 1)
+	{
+		Debug_fb$ = "QueryAll Ignored: Full query already in progress";
+	}
+	ELSE
+	{
+		g_bQueryAllQueued = 1;
+		Debug_fb$ = "QueryAll Queued for next poll cycle";
+	}
+}
+
+// This function is called sequentially to query every available status
+FUNCTION SendNextQueryInFullSequence()
+{
+    IF (g_sLastQueryCmd = "l") { StartQuery("j"); }      // Get Input
+    ELSE IF (g_sLastQueryCmd = "j") { StartQuery("f"); } // Get Volume
+    ELSE IF (g_sLastQueryCmd = "f") { StartQuery("g"); } // Get Mute
+    ELSE IF (g_sLastQueryCmd = "g") { StartQuery("b"); } // Get Brightness
+    ELSE IF (g_sLastQueryCmd = "b") { StartQuery("a"); } // Get Contrast
+    ELSE IF (g_sLastQueryCmd = "a") { StartQuery("c"); } // Get Sharpness
+    ELSE IF (g_sLastQueryCmd = "c") { StartQuery("d"); } // Get Color
+    //ELSE IF (g_sLastQueryCmd = "d") { StartQuery("e"); } // Get Tint
+    ELSE IF (g_sLastQueryCmd = "d") { StartQuery("i"); } // Get Freeze
+    ELSE IF (g_sLastQueryCmd = "i") { StartQuery("o"); } // Get Power Lock
+    ELSE IF (g_sLastQueryCmd = "o") { StartQuery("p"); } // Get Button Lock
+    ELSE IF (g_sLastQueryCmd = "p") { StartQuery("q"); } // Get Menu Lock
+    ELSE IF (g_sLastQueryCmd = "q") { StartQuery("8"); } // Get FW Version
+    ELSE IF (g_sLastQueryCmd = "8") { StartQuery("7"); } // Get Serial Number
+    ELSE IF (g_sLastQueryCmd = "7") { StartQuery("4"); } // Get Device Name
+    ELSE IF (g_sLastQueryCmd = "4") { StartQuery("6"); } // Get IP Address
+    ELSE IF (g_sLastQueryCmd = "6") { StartQuery("5"); } // Get MAC Address
+    ELSE IF (g_sLastQueryCmd = "5")
+    {
+        g_bQueryAllInProgress = 0;
+        Debug_fb$ = "Full Status Query Complete.";
+        // If polling is enabled, kick off the first recurring poll cycle now.
+        IF (g_bPollingEnabled = 1)
+        {
+            CALL StartMasterPollingLoop();
+        }
+    }
+}
+
+// This function is called after a response is received to continue the poll sequence
+FUNCTION SendNextPollQuery()
+{
+    // This function now only handles the short polling sequence.
+    // The full query sequence is handled by SendNextQueryInFullSequence.
+
+    IF (g_sLastQueryCmd = "l") { CALL StartQuery("j"); }      // Get Input
+    ELSE IF (g_sLastQueryCmd = "j") { CALL StartQuery("f"); } // Get Volume
+    ELSE IF (g_sLastQueryCmd = "f") // Last was Volume, end of poll cycle
+    {
+        Debug_fb$ = "Polling Cycle Complete";
+        CancelWait(QueryTimeout);
+        
+        // A regular poll cycle is complete. Schedule the next one.
+        // There is no need to check the queue here anymore, as StartPollingCycle handles it.
+        CALL StartMasterPollingLoop();
+    }
+}
+
+// Processes a valid response string from the display
+FUNCTION ProcessGetResponse(STRING sResponse)
+{
+    STRING sCmdCode[2], sValue[MAX_SERIAL_BUFFER_SIZE], sRawValue[MAX_SERIAL_BUFFER_SIZE];
+    
+    sCmdCode = MID(sResponse, 5, 1);
+    // For info commands, the value is the rest of the string
+    IF (sCmdCode = "7" || sCmdCode = "4" || sCmdCode = "5" || sCmdCode = "6" || sCmdCode = "8")
+    {
+        sRawValue = RIGHT(sResponse, LEN(sResponse) - 5);
+    }
+    ELSE 
+    {
+        sRawValue = MID(sResponse, 6, 3);
+    }
+    sValue = TRIM_RESPONSE(sRawValue);
+    
+    Debug_fb$ = "RX< " + GetCommandDescription("r", sCmdCode, sValue);
+    
+    IF (sCmdCode = g_sLastQueryCmd)
+    {
+        Is_Communicating_fb = 1;
+        g_bWaitingForResponse = 0;
+        CancelWait(QueryTimeout);
+
+        // Update state and call the specific feedback function
+        IF (sCmdCode = "l") 
+        { 
+            g_sCurrentPower = sValue;
+            CALL UpdatePowerFeedback();
+            CALL VerifyPowerState();
+        }
+        ELSE IF (sCmdCode = "j") 
+        { 
+            g_sCurrentInput = sValue;
+            CALL UpdateInputFeedback();
+        }
+        ELSE IF (sCmdCode = "f" || sCmdCode = "." || sCmdCode = "/")
+        {
+            IF(sCmdCode = "f") { g_nCurrentVolume = ATOI(sValue); }
+            ELSE IF(sCmdCode = ".") { g_nCurrentBass = ATOI(sValue); }
+            ELSE IF(sCmdCode = "/") { g_nCurrentTreble = ATOI(sValue); }
+            CALL UpdateAudioFeedback();
+        }
+        ELSE IF (sCmdCode = "g") 
+        { 
+            g_bIsMuted = (sValue = "001");
+            CALL UpdateAudioFeedback();
+        }
+        ELSE IF (sCmdCode = "b") 
+        { 
+            g_nCurrentBrightness = ATOI(sValue);
+            CALL UpdateBrightnessFeedback();
+        }
+        ELSE IF (sCmdCode = "a") 
+        { 
+            g_nCurrentContrast = ATOI(sValue);
+            CALL UpdateContrastFeedback();
+        }
+        ELSE IF (sCmdCode = "c") 
+        { 
+            g_nCurrentSharpness = ATOI(sValue);
+            CALL UpdateSharpnessFeedback();
+        }
+        ELSE IF (sCmdCode = "d") 
+        { 
+            g_nCurrentColor = ATOI(sValue);
+            CALL UpdateColorFeedback();
+        }
+        // Removed logic for Tint response ('e')
+        ELSE IF (sCmdCode = "i") 
+        { 
+            g_bIsFrozen = (sValue = "001");
+            CALL UpdateFreezeFeedback();
+        }
+        ELSE IF (sCmdCode = "o" || sCmdCode = "p" || sCmdCode = "q") 
+        { 
+            IF(sCmdCode = "o") { g_bIsPowerLocked = (sValue = "001"); }
+            ELSE IF(sCmdCode = "p") { g_bIsButtonLocked = (sValue = "001"); }
+            ELSE IF(sCmdCode = "q") { g_bIsMenuLocked = (sValue = "001"); }
+            CALL UpdateLockFeedback();
+        }
+        ELSE IF (sCmdCode = "8") { FW_Version_fb$ = sValue; }
+        ELSE IF (sCmdCode = "7") { Serial_Number_fb$ = sValue; }
+        ELSE IF (sCmdCode = "4") { Device_Name_fb$ = sValue; }
+        ELSE IF (sCmdCode = "6") { IP_Address_fb$ = sValue; }
+        ELSE IF (sCmdCode = "5") { MAC_Address_fb$ = sValue; }
+        
+        // Decide which chain to advance
+        IF (g_bQueryAllInProgress = 1)
+        {
+            CALL SendNextQueryInFullSequence();
+        }
+        ELSE IF (g_bPollingEnabled = 1)
+        {
+            CALL SendNextPollQuery();
+        }
+    }
+}
+
+FUNCTION BlinkPowerFeedback()
+{
+    // This function will only continue to run as long as the transition flag is set
+    IF (g_bInPowerTransition = 1)
+    {
+        // Toggle the feedback outputs
+        Power_Is_On_fb = !Power_Is_On_fb;
+        Power_Is_Off_fb = !Power_Is_Off_fb;
+        // Reschedule a call to this function
+        WAIT(50, Blink_Loop) // Blink every 0.5 seconds
+        {
+            CALL BlinkPowerFeedback();
+        }
+    }
+}
+
+//================================================================================
+// EVENT HANDLERS
+//================================================================================
+
+// --- Command PUSH Handlers ---
+PUSH Power_On_trig
+{
+    IF (g_bInPowerTransition = 1)
+    {
+        Debug_fb$ = "Pwr Cmd Ignored: Busy";
+        RETURN;
+    }
+    g_bInPowerTransition = 1;
+    Debug_fb$ = "PwrOn: Starting...";
+    // BlinkPowerFeedback() call removed from this handler
+    SendCommand(CMD_TYPE_SET, "!", "001");
+
+    WAIT(500, PowerOn_Timeout) // 5-second timeout for safety
+    {
+        IF (g_bInPowerTransition = 1)
+        {
+            g_bInPowerTransition = 0;
+            Debug_fb$ = "PwrOn: Timeout";
+            CALL UpdateAllFeedback(); 
+        }
+    }
+}
+
+PUSH Power_Off_trig
+{
+    IF (g_bInPowerTransition = 1)
+    {
+        Debug_fb$ = "Pwr Cmd Ignored: Busy";
+        RETURN;
+    }
+    g_bInPowerTransition = 1;
+    Debug_fb$ = "PwrOff: Starting...";
+    CALL BlinkPowerFeedback(); // Start blinking
+    SendCommand(CMD_TYPE_SET, "!", "000");
+
+    WAIT(1200, PowerOff_Timeout) // 12-second timeout to account for 10s delay
+    {
+        IF (g_bInPowerTransition = 1)
+        {
+            g_bInPowerTransition = 0;
+            Debug_fb$ = "PwrOff: Timeout";
+            CALL UpdateAllFeedback(); 
+        }
+    }
+}
+
+// --- Command PUSH Handlers ---
+PUSH Input_Select_HDMI1_trig   { SendCommand(CMD_TYPE_SET, "\x22", "004"); }
+PUSH Input_Select_HDMI2_trig   { SendCommand(CMD_TYPE_SET, "\x22", "014"); }
+PUSH Input_Select_HDMI3_trig   { SendCommand(CMD_TYPE_SET, "\x22", "024"); }
+PUSH Input_Select_Android_trig { SendCommand(CMD_TYPE_SET, "\x22", "00A"); }
+PUSH Input_Select_TypeC_trig   { SendCommand(CMD_TYPE_SET, "\x22", "019"); }
+
+// --- Audio ---
+CHANGE Volume_Level_ain
+{
+    STRING sValue[4];
+    INTEGER nValue;
+    nValue = Volume_Level_ain;
+    IF (nValue > 100) { nValue = 100; } // Clamp to max
+    MAKESTRING(sValue, "%03d", nValue);
+    SendCommand(CMD_TYPE_SET, "5", sValue);
+}
+PUSH Volume_Up_trig     { SendCommand(CMD_TYPE_SET, "5", "901"); }
+PUSH Volume_Down_trig   { SendCommand(CMD_TYPE_SET, "5", "900"); }
+PUSH Mute_On_trig       { SendCommand(CMD_TYPE_SET, "6", "001"); }
+PUSH Mute_Off_trig      { SendCommand(CMD_TYPE_SET, "6", "000"); }
+
+CHANGE Bass_Level_ain
+{
+    STRING sValue[4];
+    INTEGER nValue;
+    nValue = Bass_Level_ain;
+    IF (nValue > 100) { nValue = 100; } // Clamp to max
+    MAKESTRING(sValue, "%03d", nValue);
+    SendCommand(CMD_TYPE_SET, ".", sValue);
+}
+
+PUSH Bass_Up_trig
+{
+    STRING sValue[4];
+    INTEGER nNewValue;
+    nNewValue = g_nCurrentBass + 5;
+    IF (nNewValue > 100) { nNewValue = 100; }
+    MAKESTRING(sValue, "%03d", nNewValue);
+    SendCommand(CMD_TYPE_SET, ".", sValue);
+}
+
+PUSH Bass_Down_trig
+{
+    STRING sValue[4];
+    INTEGER nNewValue;
+    nNewValue = g_nCurrentBass - 5;
+    IF (nNewValue < 0) { nNewValue = 0; }
+    MAKESTRING(sValue, "%03d", nNewValue);
+    SendCommand(CMD_TYPE_SET, ".", sValue);
+}
+
+CHANGE Treble_Level_ain
+{
+    STRING sValue[4];
+    INTEGER nValue;
+    nValue = Treble_Level_ain;
+    IF (nValue > 100) { nValue = 100; } // Clamp to max
+    SendCommand(CMD_TYPE_SET, "/", sValue);
+}
+
+PUSH Treble_Up_trig
+{
+    STRING sValue[4];
+    INTEGER nNewValue;
+    nNewValue = g_nCurrentTreble + 5;
+    IF (nNewValue > 100) { nNewValue = 100; }
+    MAKESTRING(sValue, "%03d", nNewValue);
+    SendCommand(CMD_TYPE_SET, "/", sValue);
+}
+
+PUSH Treble_Down_trig
+{
+    STRING sValue[4];
+    INTEGER nNewValue;
+    nNewValue = g_nCurrentTreble - 5;
+    IF (nNewValue < 0) { nNewValue = 0; }
+    MAKESTRING(sValue, "%03d", nNewValue);
+    SendCommand(CMD_TYPE_SET, "/", sValue);
+}
+
+// --- Picture ---
+CHANGE Brightness_Level_ain
+{
+    STRING sValue[4];
+    INTEGER nValue;
+    nValue = Brightness_Level_ain;
+    IF (nValue > 100) { nValue = 100; } // Clamp to max
+    MAKESTRING(sValue, "%03d", nValue);
+    SendCommand(CMD_TYPE_SET, "$", sValue);
+}
+PUSH Brightness_Up_trig   { SendCommand(CMD_TYPE_SET, "$", "901"); }
+PUSH Brightness_Down_trig { SendCommand(CMD_TYPE_SET, "$", "900"); }
+
+CHANGE Contrast_Level_ain
+{
+    STRING sValue[4];
+    INTEGER nValue;
+    nValue = Contrast_Level_ain;
+    IF (nValue > 100) { nValue = 100; } // Clamp to max
+    MAKESTRING(sValue, "%03d", nValue);
+    SendCommand(CMD_TYPE_SET, "#", sValue);
+}
+
+PUSH Contrast_Up_trig
+{
+    STRING sValue[4];
+    INTEGER nNewValue;
+    nNewValue = g_nCurrentContrast + 5;
+    IF (nNewValue > 100) { nNewValue = 100; }
+    MAKESTRING(sValue, "%03d", nNewValue);
+    SendCommand(CMD_TYPE_SET, "#", sValue);
+}
+
+PUSH Contrast_Down_trig
+{
+    STRING sValue[4];
+    INTEGER nNewValue;
+    nNewValue = g_nCurrentContrast - 5;
+    IF (nNewValue < 0) { nNewValue = 0; }
+    MAKESTRING(sValue, "%03d", nNewValue);
+    SendCommand(CMD_TYPE_SET, "#", sValue);
+}
+
+CHANGE Sharpness_Level_ain
+{
+    STRING sValue[4];
+    INTEGER nValue;
+    nValue = Sharpness_Level_ain;
+    IF (nValue > 100) { nValue = 100; } // Clamp to max
+    MAKESTRING(sValue, "%03d", nValue);
+    SendCommand(CMD_TYPE_SET, "%", sValue);
+}
+
+PUSH Sharpness_Up_trig
+{
+    STRING sValue[4];
+    INTEGER nNewValue;
+    nNewValue = g_nCurrentSharpness + 5;
+    IF (nNewValue > 100) { nNewValue = 100; }
+    MAKESTRING(sValue, "%03d", nNewValue);
+    SendCommand(CMD_TYPE_SET, "%", sValue);
+}
+
+PUSH Sharpness_Down_trig
+{
+    STRING sValue[4];
+    INTEGER nNewValue;
+    nNewValue = g_nCurrentSharpness - 5;
+    IF (nNewValue < 0) { nNewValue = 0; }
+    MAKESTRING(sValue, "%03d", nNewValue);
+    SendCommand(CMD_TYPE_SET, "%", sValue);
+}
+
+CHANGE Color_Level_ain
+{
+    STRING sValue[4];
+    INTEGER nValue;
+    nValue = Color_Level_ain;
+    IF (nValue > 100) { nValue = 100; } // Clamp to max
+    MAKESTRING(sValue, "%03d", nValue);
+    SendCommand(CMD_TYPE_SET, "&", sValue);
+}
+
+PUSH Color_Up_trig
+{
+    STRING sValue[4];
+    INTEGER nNewValue;
+    nNewValue = g_nCurrentColor + 5;
+    IF (nNewValue > 100) { nNewValue = 100; }
+    MAKESTRING(sValue, "%03d", nNewValue);
+    SendCommand(CMD_TYPE_SET, "&", sValue);
+}
+
+PUSH Color_Down_trig
+{
+    STRING sValue[4];
+    INTEGER nNewValue;
+    nNewValue = g_nCurrentColor - 5;
+    IF (nNewValue < 0) { nNewValue = 0; }
+    MAKESTRING(sValue, "%03d", nNewValue);
+    SendCommand(CMD_TYPE_SET, "&", sValue);
+}
+
+CHANGE Tint_Level_ain
+{
+    STRING sValue[4];
+    INTEGER nValue;
+    nValue = Tint_Level_ain;
+    IF (nValue > 100) { nValue = 100; } // Clamp to max
+    MAKESTRING(sValue, "%03d", nValue);
+    SendCommand(CMD_TYPE_SET, "'", sValue);
+}
+
+PUSH Tint_Up_trig
+{
+    STRING sValue[4];
+    INTEGER nNewValue;
+    nNewValue = g_nCurrentTint + 5;
+    IF (nNewValue > 100) { nNewValue = 100; }
+    MAKESTRING(sValue, "%03d", nNewValue);
+    SendCommand(CMD_TYPE_SET, "'", sValue);
+}
+
+PUSH Tint_Down_trig
+{
+    STRING sValue[4];
+    INTEGER nNewValue;
+    nNewValue = g_nCurrentTint - 5;
+    IF (nNewValue < 0) { nNewValue = 0; }
+    MAKESTRING(sValue, "%03d", nNewValue);
+    SendCommand(CMD_TYPE_SET, "'", sValue);
+}
+
+PUSH Freeze_On_trig       { SendCommand(CMD_TYPE_SET, "*", "001"); }
+PUSH Freeze_Off_trig      { SendCommand(CMD_TYPE_SET, "*", "000"); }
+PUSH Zoom_Mode_Full_trig     { SendCommand(CMD_TYPE_SET, "1", "000"); }
+PUSH Zoom_Mode_Normal_trig   { SendCommand(CMD_TYPE_SET, "1", "001"); }
+PUSH Zoom_Mode_Real_trig     { SendCommand(CMD_TYPE_SET, "1", "002"); }
+
+PUSH Color_Mode_Normal_trig  { SendCommand(CMD_TYPE_SET, ")", "000"); }
+PUSH Color_Mode_Warm_trig    { SendCommand(CMD_TYPE_SET, ")", "001"); }
+PUSH Color_Mode_Cold_trig    { SendCommand(CMD_TYPE_SET, ")", "002"); }
+
+PUSH Power_Lock_On_trig      { SendCommand(CMD_TYPE_SET, "4", "001"); }
+PUSH Power_Lock_Off_trig     { SendCommand(CMD_TYPE_SET, "4", "000"); }
+PUSH Button_Lock_On_trig     { SendCommand(CMD_TYPE_SET, "8", "001"); }
+PUSH Button_Lock_Off_trig    { SendCommand(CMD_TYPE_SET, "8", "000"); }
+PUSH Menu_Lock_On_trig       { SendCommand(CMD_TYPE_SET, ">", "001"); }
+PUSH Menu_Lock_Off_trig      { SendCommand(CMD_TYPE_SET, ">", "000"); }
+
+PUSH Keypad_Up_trig          { SendCommand(CMD_TYPE_SET, "A", "000"); }
+PUSH Keypad_Down_trig        { SendCommand(CMD_TYPE_SET, "A", "001"); }
+PUSH Keypad_Left_trig        { SendCommand(CMD_TYPE_SET, "A", "002"); }
+PUSH Keypad_Right_trig       { SendCommand(CMD_TYPE_SET, "A", "003"); }
+PUSH Keypad_Enter_trig       { SendCommand(CMD_TYPE_SET, "A", "004"); }
+PUSH Keypad_Menu_trig        { SendCommand(CMD_TYPE_SET, "A", "006"); }
+PUSH Keypad_Exit_trig        { SendCommand(CMD_TYPE_SET, "A", "007"); }
+
+PUSH Restore_Defaults_trig   { SendCommand(CMD_TYPE_SET, "~", "000"); }
+
+//---- Information Query Handlers ----
+CHANGE Display_ID_ain
+{
+    CALL SetDisplayID();
+}
+               
+PUSH Query_All_Status_trig
+{
+    CALL QueryAllStatus();
+}
+
+// --- Polling Control ---
+CHANGE Enable_Polling_trig
+{
+    INTEGER bWasPolling;
+
+    bWasPolling = g_bPollingEnabled;
+    g_bPollingEnabled = Enable_Polling_trig;
+    Polling_Is_Active_fb = g_bPollingEnabled;
+    
+    // If polling was just turned ON after the module has initialized,
+    // we need to kick-start the polling loop.
+    IF (g_bPollingEnabled = 1 && bWasPolling = 0 && g_bInitialized = 1)
+    {
+        Debug_fb$ = "Polling Enabled. Starting poll loop.";
+        // Call StartMasterPollingLoop to schedule the first wait.
+        // StartPollingCycle will be called when that wait expires.
+        CALL StartMasterPollingLoop();
+    }
+    ELSE IF (g_bPollingEnabled = 0)
+    {
+        Debug_fb$ = "Polling Disabled";
+        // No need to cancel the wait; the checks within the loop will prevent execution.
+    }
+}
+
+CHANGE Poll_Rate_seconds_ain
+{
+    CALL SetPollInterval();
+}
+
+// --- Serial Data Handler ---
+CHANGE From_Display_rx$
+{
+    STRING sLine[MAX_SERIAL_BUFFER_SIZE];
+    INTEGER nLen;
+    STRING sCmdType[2];
+    
+    g_sRxBuffer = g_sRxBuffer + From_Display_rx$;
+    ClearBuffer(From_Display_rx$);
+
+    WHILE (FIND(CMD_TERMINATOR, g_sRxBuffer) > 0)
+    {
+        sLine = REMOVE(CMD_TERMINATOR, g_sRxBuffer);
+        sLine = TRIM_RESPONSE(sLine);
+        nLen = LEN(sLine);
+
+        IF (nLen > 0)
+        {
+            sCmdType = MID(sLine, 4, 1);
+            IF (sCmdType = REPLY_ACK)             { CALL ProcessAck(); }
+            ELSE IF (sCmdType = REPLY_NACK)
+            {
+                Is_Communicating_fb = 0;
+                Debug_fb$ = "RX: NACK / Error";
+                Print("ERROR: Command was rejected by the display (NACK).\n");
+                
+                // If a query that was part of a chain was rejected, reset the appropriate flags.
+                IF (g_bWaitingForResponse = 1)
+                {
+                    g_bWaitingForResponse = 0;
+                    CancelWait(QueryTimeout);
+
+                    // If the failed query was part of a full sequence, abort it and restart polling.
+                    IF (g_bQueryAllInProgress = 1)
+                    {
+                        g_bQueryAllInProgress = 0; // Reset the master flag
+                        Debug_fb$ = "Full Query Aborted by NACK";
+                        Print("QueryAllStatus: Sequence aborted due to NACK from display.\n");
+                        // If polling is enabled, this allows the next poll to start correctly.
+                        IF (g_bPollingEnabled = 1)
+                        {
+                            CALL StartMasterPollingLoop(); // CORRECTED FUNCTION CALL
+                        }
+                    }
+                    // If it was just a regular poll that failed, continue to the next item.
+                    ELSE IF (g_bPollingEnabled = 1)
+                    {
+                        CALL SendNextPollQuery();
+                    }
+                }
+            }
+            ELSE IF (sCmdType = "r") // Reply to a Get command
+            {
+                CALL ProcessGetResponse(sLine);
+            }
+            ELSE
+            {
+                Debug_fb$ = "RX: Unknown data: " + sLine;
+                Print("WARNING: Received unknown data format: %s\n", sLine);
+            }
+        }
+    }
+}
+
+//================================================================================
+// MAIN FUNCTION
+//================================================================================
+FUNCTION MAIN()
+{
+    g_bInitialized = 0;
+    Is_Communicating_fb = 0;
+    g_bInPowerTransition = 0; 
+    g_sRxBuffer = "";
+    g_sLastSetCommand = "";
+    g_bWaitingForResponse = 0;
+    g_sLastQueryCmd = "";
+    g_bQueryAllInProgress = 0;
+    g_bQueryAllQueued = 0;
+    
+    CALL UpdateAllFeedback(); 
+    CALL SetDisplayID();
+    CALL SetPollInterval();
+
+    // Set initial polling state from input, but do not start the loop yet.
+    g_bPollingEnabled = Enable_Polling_trig;
+    Polling_Is_Active_fb = g_bPollingEnabled;
+    
+    WAIT(9000) // Wait 90 seconds for display and SIMPL program to settle
+    {
+        g_bInitialized = 1;
+        Debug_fb$ = "Module Initialized";
+
+        // After the startup delay, re-check the polling input's state.
+        g_bPollingEnabled = Enable_Polling_trig;
+        Polling_Is_Active_fb = g_bPollingEnabled;
+
+        // Always run a full query at startup.
+        CALL QueryAllStatus();
+        
+        // If polling is enabled, also start the recurring poll loop independently.
+        // This ensures the timer starts even if the initial query gets queued or fails.
+        IF (g_bPollingEnabled = 1)
+        {
+            CALL StartMasterPollingLoop();
+        }
+    }
+}
